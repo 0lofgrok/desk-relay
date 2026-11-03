@@ -813,7 +813,7 @@
       const done = a.status !== "running" && (a.passed === true || a.passed === false) && shown >= 8;
       const res = $("#u-res", v);
       res.innerHTML = !done ? `<div class="verdict"><div class="big" style="background:var(--cyan-d);color:var(--cyan)">${icon("auditor")}</div><div><div style="font-weight:700;font-size:18px">Taking apart...</div><div class="muted">${Math.min(shown, 8)}/8 parts read</div></div></div>`
-        : a.passed ? `<div class="verdict"><div class="big" style="background:var(--green-d);color:var(--green)">${icon("check")}</div><div><div style="font-weight:700;font-size:18px">${esc(a.headline || "Cleared · 8/8 parts")}</div><div class="muted">${esc(a.subline || "Sent to Executor")}</div></div></div>`
+        : a.passed ? `<div class="verdict"><div class="big" style="background:var(--green-d);color:var(--green)">${icon("check")}</div><div><div style="font-weight:700;font-size:18px">${esc(a.headline || "Cleared · 8/8 parts")}</div><div class="muted">${esc(a.subline || "Sent to Analyst")}</div></div></div>`
         : `<div class="verdict"><div class="big" style="background:var(--red-d);color:var(--red)">${icon("x")}</div><div><div style="font-weight:700;font-size:18px">${esc(a.headline || "Rejected · " + (a.reason || ""))}</div><div class="muted">${esc(a.subline || "Desk won't buy " + coinName(a))}</div></div></div>`;
     }
     function update() {
