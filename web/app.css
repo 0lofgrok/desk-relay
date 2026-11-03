@@ -385,3 +385,5 @@ input.tokf:focus{outline:2px solid var(--blue)}
 .lt-new{animation:ltin .55s cubic-bezier(.2,.9,.3,1.2) both,flash 1.6s ease-out .1s}
 @keyframes ltin{from{transform:translateY(-14px) scale(.97);opacity:0}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion:reduce){.lt-new{animation:none}}
+.lt-wide{grid-column:span 3;display:flex;justify-content:space-between;align-items:center}
+.lt-wide .lt-v{margin-top:0;font-size:15px}

@@ -1070,7 +1070,8 @@
         </div></div>
         <div class="sec"><div class="sec-h"><h2>Wallet</h2></div><div class="group plain">
           <div class="row"><div class="main"><div class="t">Address</div><div class="s mono wrap" style="word-break:break-all">${w.pubkey ? esc(w.pubkey) : "Not set · add the public address in Account › Auto-trade"}</div></div></div>
-          ${row("Balance", w.sol !== null && w.sol !== undefined ? `${esc((+w.sol).toFixed(4))} SOL${has(w.usd) ? " · " + esc(fmtUsd(w.usd)) : ""}` : "n/a")}
+          ${row("Real balance", w.sol !== null && w.sol !== undefined ? `${esc((+w.sol).toFixed(4))} SOL${has(w.usd) ? " · " + esc(fmtUsd(w.usd)) : ""}` : "n/a")}
+          ${twRow(T.testWallet)}
           ${row("PumpPortal key", T.apiKeySaved ? '<span class="chip green">Saved on desk</span>' : '<span class="chip red">Missing</span>')}
         </div></div>
         <div class="sec"><div class="sec-h"><h2>Caps</h2><button class="link tap" data-go="#/account/trade">Edit</button></div><div class="group plain">
@@ -1117,11 +1118,17 @@
   const fmtET = (t) => { const ms = toMs(t); return ms === null ? "" : new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "America/New_York" }) + " ET"; };
   const loadFeed = async () => { try { C.tradefeed = await api("/api/tradefeed"); } catch (e) { if (e && e.status === 404) C.tradefeed = C.tradefeed || null; else throw e; } };
   const pnlCls = (v) => (num(v) === null ? "" : num(v) < 0 ? "red" : "green");
+  const twText = (tw) => tw && has(tw.usd) ? `${fmtUsd(tw.usd)}${has(tw.sol) ? " · " + (+tw.sol).toFixed(4) + " SOL" : ""}` : "n/a";
+  const twRow = (tw) => `<div class="row" id="t-testwallet"><div class="main"><div class="t">Test wallet <span class="chip amber">TEST</span></div><div class="s wrap">Simulated: ${tw ? esc(fmtUsd(tw.startUsd, 0)) + " start" + (num(tw.openCostUsd) ? " · " + esc(fmtUsd(tw.openCostUsd)) + " in open trades" : "") + " · realized " + esc(fmtSigned(tw.realizedUsd)) : "n/a"}. TEST sizes from this, never the real wallet.</div></div><div class="mono">${esc(twText(tw))}</div></div>`;
   function feedSummary(F) {
     const s = (F && F.summary) || {};
+    const w = ((C.autotrade || {}).wallet) || {};
+    const real = has(w.sol) ? `${(+w.sol).toFixed(4)} SOL${has(w.usd) ? " · " + fmtUsd(w.usd) : ""}` : "n/a";
     const cell = (k, v, cls = "") => `<div class="lt-cell"><div class="lt-k">${k}</div><div class="lt-v mono ${cls}">${v}</div></div>`;
     return `<div class="lt-sum" id="lt-sum">${cell("Test orders", esc(fmtInt(s.testOrders)))}${cell("Open", esc(fmtInt(s.open)))}${cell("Closed", esc(fmtInt(s.closed)))}
-      ${cell("P&amp;L", esc(fmtSigned(s.pnlUsd)), pnlCls(s.pnlUsd))}${cell("P&amp;L %", esc(fmtPct(s.pnlPct)), pnlCls(s.pnlPct))}${cell("Win rate", s.winRate === null || s.winRate === undefined ? "n/a" : esc(fmtPct(s.winRate, 0, false)))}</div>`;
+      ${cell("P&amp;L", esc(fmtSigned(s.pnlUsd)), pnlCls(s.pnlUsd))}${cell("P&amp;L %", esc(fmtPct(s.pnlPct)), pnlCls(s.pnlPct))}${cell("Win rate", s.winRate === null || s.winRate === undefined ? "n/a" : esc(fmtPct(s.winRate, 0, false)))}
+      <div class="lt-cell lt-wide" id="lt-testwallet"><div class="lt-k">Test wallet (simulated)</div><div class="lt-v mono">${esc(twText(s.testWallet))}</div></div>
+      <div class="lt-cell lt-wide" id="lt-realwallet"><div class="lt-k">Real wallet</div><div class="lt-v mono">${esc(real)}</div></div></div>`;
   }
   function feedHomeCard(F) {
     if (!F || !F.summary) return "";
@@ -1153,7 +1160,7 @@
       <div class="offline-slot"></div><div class="sec lt-note muted">Orders auto-trade would place. In TEST nothing is sent. Updates every 4s.</div><div id="lt-sumbox"></div><div id="lt-list" class="sec"></div><div class="foot" id="lt-foot"></div>`;
     $("#lt-back", v).onclick = () => { haptic(); history.length > 1 ? history.back() : (location.hash = "#/"); };
     const seen = new Set(); let first = true, timer = null, alive = true;
-    async function load() { await loadFeed(); }
+    async function load() { await Promise.all([loadFeed(), loadTrade().catch(() => {})]); }
     function update() {
       const F = C.tradefeed, list = $("#lt-list", v);
       $("#lt-badge", v).textContent = F && F.mode === "LIVE_WALLET" ? "LIVE WALLET" : "TEST";
@@ -1169,7 +1176,7 @@
       }
       $("#lt-foot", v).textContent = has(F.feedAge) ? `Feed ${F.feedAge < 20 ? "live" : "stale"} · updated ${Math.round(F.feedAge)}s ago` : "";
     }
-    const tick = async () => { if (!alive) return; try { await loadFeed(); update(); } catch (_) {} if (alive) timer = setTimeout(tick, 4000); };
+    const tick = async () => { if (!alive) return; try { await load(); update(); } catch (_) {} if (alive) timer = setTimeout(tick, 4000); };
     timer = setTimeout(tick, 4000);
     v.onclick = (e) => {
       const f = e.target.closest("[data-ltfomo]");
