@@ -380,6 +380,7 @@
       <div class="ranges" id="h-ranges">${RANGES.map((r) => `<button class="pill tap ${r === homeRange ? "on" : ""}" data-r="${r}">${r === "LIVE" ? '<i class="ldot"></i>' : ""}${r}</button>`).join("")}</div>
       <div id="h-needs"></div>
       <div id="h-trade"></div>
+      <div id="h-live"></div>
       <section class="sec"><div class="sec-h"><h2 id="h-agents-h">Agents</h2><button class="link tap" data-go="#/agents">See all</button></div>
         <div class="hscroll" id="h-cards"></div><div class="dots" id="h-dots">${AGENTS.map((_, i) => `<i class="${i ? "" : "on"}"></i>`).join("")}</div></section>
       <section class="sec"><div class="sec-h"><h2>Activity</h2><button class="link tap" data-go="#/activity">See all</button></div><div id="h-act"></div></section>`;
@@ -388,6 +389,7 @@
     $$("[data-go]", v).forEach((b) => (b.onclick = () => (location.hash = b.dataset.go)));
     $("#h-trade", v).addEventListener("click", (e) => { const st = e.target.closest("[data-tstop]"); if (st) { haptic(); return tradeStop(st); }
       const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; } });
+    $("#h-live", v).addEventListener("click", (e) => { const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; } });
     $("#h-ranges", v).addEventListener("click", (e) => {
       const b = e.target.closest("[data-r]"); if (!b || b.dataset.r === homeRange) return; haptic();
       homeRange = b.dataset.r; $$("#h-ranges .pill", v).forEach((x) => x.classList.toggle("on", x === b));
@@ -407,6 +409,7 @@
     async function load() {
       if (!C.account) loadAccount().then(() => cur && cur.update && cur.update()).catch(() => {});
       loadTrade().then(() => cur && cur.update && cur.update()).catch(() => {});
+      loadFeed().then(() => cur && cur.update && cur.update()).catch(() => {});
       await all([loadState(), loadActivity(),
         api("/api/chart?range=" + homeRange).then((d) => { C.chart[homeRange] = d && d[homeRange] ? d[homeRange] : d; })]);
     }
@@ -442,6 +445,7 @@
       }
       renderNeeds(v, st);
       const ht = $("#h-trade", v); if (ht) { const h = tradeHomeCard(C.autotrade); if (ht._h !== h) { ht._h = h; ht.innerHTML = h; } }
+      const hl = $("#h-live", v); if (hl) { const h = feedHomeCard(C.tradefeed); if (hl._h !== h) { hl._h = h; hl.innerHTML = h; } }
       const A = agentsOf(st);
       const running = num(pick(st || {}, "agentsRunning")) ?? AGENTS.filter((a) => A[a.key] && agentPaused(a.key, A[a.key]) === false).length;
       $("#h-agents-h", v).textContent = st ? `Agents · ${running} running` : "Agents";
@@ -453,7 +457,8 @@
       $("#h-act", v).innerHTML = activityList(C.activity, 5);
       bellDot();
     }
-    return { load, update, unmount: () => chart.destroy() };
+    const feedTimer = setInterval(() => { if (!document.hidden) loadFeed().then(() => cur && cur.update && cur.update()).catch(() => {}); }, 8000);
+    return { load, update, unmount: () => { clearInterval(feedTimer); chart.destroy(); } };
   }
 
   function needsList(st) {
@@ -1108,7 +1113,74 @@
     return { load, update, unmount: () => { v.onclick = null; } };
   }
 
-  const SCREENS = { trade: tradeScreen, home: homeScreen, agents: agentsScreen, activity: activityScreen, account: accountScreen, coin: coinScreen, audit: auditScreen };
+  /* ================================================================ LIVE TRADES feed (what auto-trade is buying into; read-only) */
+  const fmtET = (t) => { const ms = toMs(t); return ms === null ? "" : new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: "America/New_York" }) + " ET"; };
+  const loadFeed = async () => { try { C.tradefeed = await api("/api/tradefeed"); } catch (e) { if (e && e.status === 404) C.tradefeed = C.tradefeed || null; else throw e; } };
+  const pnlCls = (v) => (num(v) === null ? "" : num(v) < 0 ? "red" : "green");
+  function feedSummary(F) {
+    const s = (F && F.summary) || {};
+    const cell = (k, v, cls = "") => `<div class="lt-cell"><div class="lt-k">${k}</div><div class="lt-v mono ${cls}">${v}</div></div>`;
+    return `<div class="lt-sum" id="lt-sum">${cell("Test orders", esc(fmtInt(s.testOrders)))}${cell("Open", esc(fmtInt(s.open)))}${cell("Closed", esc(fmtInt(s.closed)))}
+      ${cell("P&amp;L", esc(fmtSigned(s.pnlUsd)), pnlCls(s.pnlUsd))}${cell("P&amp;L %", esc(fmtPct(s.pnlPct)), pnlCls(s.pnlPct))}${cell("Win rate", s.winRate === null || s.winRate === undefined ? "n/a" : esc(fmtPct(s.winRate, 0, false)))}</div>`;
+  }
+  function feedHomeCard(F) {
+    if (!F || !F.summary) return "";
+    const s = F.summary, last = (F.items || [])[0];
+    return `<section class="sec"><div class="sec-h"><h2>Live trades</h2><button class="link tap" data-go="#/live">Open</button></div>
+      <div class="group plain"><div class="row tap" data-go="#/live" id="h-live-row"><div class="main"><div class="t">What it's buying ${tradeChip(F.mode === "LIVE_WALLET" ? "LIVE_WALLET" : "TEST")}</div>
+        <div class="s">${esc(fmtInt(s.testOrders))} test orders · ${esc(fmtInt(s.open))} open · P&amp;L <span class="${pnlCls(s.pnlUsd)}">${esc(fmtSigned(s.pnlUsd))}</span>${last ? " · last " + esc((last.side === "buy" ? "buy " : "sell ") + (last.symbol || "")) : ""}</div></div>${icon("chev", "chev")}</div></div></section>`;
+  }
+  function feedCard(it, isNew) {
+    const buy = it.side === "buy", open = it.positionStatus === "open" || it.positionStatus === "closing", closed = it.positionStatus === "closed";
+    const nm = it.name && it.symbol && it.name !== it.symbol ? `${esc(it.name)} <span class="muted">${esc(it.symbol)}</span>` : esc(it.symbol || it.name || (it.mint || "").slice(0, 6));
+    const aud = has(it.auditorChecked) && it.auditorChecked ? `Auditor ${esc(it.auditorPassed)}/${esc(it.auditorChecked)}` : "Auditor n/a";
+    const ana = has(it.analystScore) ? `Analyst ${esc(it.analystScore)}` : "Analyst n/a";
+    const pnl = has(it.pnlUsd) ? `<div class="lt-pnl mono ${pnlCls(it.pnlUsd)}">${esc(fmtSigned(it.pnlUsd))}${has(it.pnlPct) ? " · " + esc(fmtPct(it.pnlPct, 1)) : ""}</div>` : "";
+    const state = buy ? (open ? `<span class="chip blue">open</span>` : closed ? `<span class="chip grey">closed</span>` : "") : `<span class="chip grey">exit</span>`;
+    const size = buy ? `${has(it.sol) ? esc((+it.sol).toFixed(4)) + " SOL · " : ""}${esc(fmtUsd(it.usd))}` : `${esc(it.amount || "")}${has(it.usd) ? " · ~" + esc(fmtUsd(it.usd)) : ""}`;
+    const live = buy && open ? `<div class="lt-line">Now ${esc(fmtPrice(it.priceNow))}${has(it.mcapNow) ? " · mcap " + esc(fmtCompact(it.mcapNow)) : ""} · <b class="${pnlCls(it.pnlPct)}">unrealized ${esc(fmtPct(it.pnlPct, 1))}</b></div>` : "";
+    const exit = (closed || !buy) && (it.exitReason || it.reason) ? `<div class="lt-line">Exit: ${esc(it.exitReason || it.reason)}</div>` : "";
+    return `<div class="lt-card tap${isNew ? " lt-new" : ""}" data-lt="${esc(it.id)}" data-mint="${esc(it.mint)}">
+      <div class="lt-top"><span class="chip ${buy ? "green" : "red"}">${buy ? "WOULD BUY" : "WOULD SELL"}</span>${it.mode === "TEST" ? `<span class="chip amber">TEST</span>` : `<span class="chip red">WALLET</span>`}${state}<span class="lt-time muted">${esc(fmtET(it.ts))}</span></div>
+      <div class="lt-name">${nm}</div>
+      <div class="lt-line mono">${size}</div>
+      <div class="lt-line">Entry ${esc(fmtPrice(it.entryPrice))}${has(it.entryMcap) ? " · mcap " + esc(fmtCompact(it.entryMcap)) : ""}</div>
+      <div class="lt-line muted">${aud} · ${ana}</div>${live}${exit}${pnl}
+      <div class="btn-row"><button class="btn ${buy && !closed ? "green" : "red"}" data-ltfomo="${esc(it.id)}">${buy && !closed ? "Open on FOMO" : "View on FOMO"}</button><button class="btn ghost" data-go="#/coin/${esc(encodeURIComponent(it.mint))}">Coin details</button></div></div>`;
+  }
+  function liveScreen(v) {
+    v.innerHTML = `<header class="hdr"><button class="back tap" id="lt-back">${icon("back")}Back</button><div class="title" style="flex:1;text-align:center"><span>Live trades</span></div><span class="chip amber" id="lt-badge">TEST</span></header>
+      <div class="offline-slot"></div><div class="sec lt-note muted">Orders auto-trade would place. In TEST nothing is sent. Updates every 4s.</div><div id="lt-sumbox"></div><div id="lt-list" class="sec"></div><div class="foot" id="lt-foot"></div>`;
+    $("#lt-back", v).onclick = () => { haptic(); history.length > 1 ? history.back() : (location.hash = "#/"); };
+    const seen = new Set(); let first = true, timer = null, alive = true;
+    async function load() { await loadFeed(); }
+    function update() {
+      const F = C.tradefeed, list = $("#lt-list", v);
+      $("#lt-badge", v).textContent = F && F.mode === "LIVE_WALLET" ? "LIVE WALLET" : "TEST";
+      $("#lt-badge", v).className = "chip " + (F && F.mode === "LIVE_WALLET" ? "red" : "amber");
+      if (!F) { list.innerHTML = NET.offline ? emptyBox("executor", "No live trades feed yet", "The desk's feed sends it every few seconds") : sk(160, "100%", 14) + sk(160, "100%", 14, 14); return; }
+      const sh = feedSummary(F), sb = $("#lt-sumbox", v); if (sb._h !== sh) { sb._h = sh; sb.innerHTML = sh; }
+      const items = F.items || [];
+      if (!items.length) { list.innerHTML = emptyBox("executor", "No trades yet", "Each would-buy and would-sell shows up here the moment the desk records it"); }
+      else {
+        const html = items.map((it) => feedCard(it, !first && !seen.has(it.id) && !RM())).join("");
+        if (list._h !== html.replace(/ lt-new/g, "")) { list._h = html.replace(/ lt-new/g, ""); list.innerHTML = html; }
+        items.forEach((it) => seen.add(it.id)); first = false;
+      }
+      $("#lt-foot", v).textContent = has(F.feedAge) ? `Feed ${F.feedAge < 20 ? "live" : "stale"} · updated ${Math.round(F.feedAge)}s ago` : "";
+    }
+    const tick = async () => { if (!alive) return; try { await loadFeed(); update(); } catch (_) {} if (alive) timer = setTimeout(tick, 4000); };
+    timer = setTimeout(tick, 4000);
+    v.onclick = (e) => {
+      const f = e.target.closest("[data-ltfomo]");
+      if (f) { e.stopPropagation(); const it = ((C.tradefeed || {}).items || []).find((x) => String(x.id) === f.dataset.ltfomo); return openExternal(it && it.link); }
+      const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; return; }
+      const c = e.target.closest("[data-mint]"); if (c) { haptic(); location.hash = "#/coin/" + encodeURIComponent(c.dataset.mint); }
+    };
+    return { load, update, unmount: () => { alive = false; clearTimeout(timer); v.onclick = null; } };
+  }
+
+  const SCREENS = { live: liveScreen, trade: tradeScreen, home: homeScreen, agents: agentsScreen, activity: activityScreen, account: accountScreen, coin: coinScreen, audit: auditScreen };
 
   /* ================================================================ SSE: live trades + activity */
   let es = null, esRetry = 0, lastSeq = 0;

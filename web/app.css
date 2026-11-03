@@ -368,3 +368,20 @@ input.tokf:focus{outline:2px solid var(--blue)}
 .btn.stopbtn[disabled]{background:var(--card2);color:var(--muted);box-shadow:none;letter-spacing:0;font-size:16px;font-weight:600}
 .s.amber,.amber{color:var(--amber)}
 .wrap{white-space:normal!important;overflow:visible!important;text-overflow:clip!important}
+/* live trades feed */
+.lt-note{font-size:13px;margin-top:6px}
+.lt-sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 16px 4px}
+.lt-cell{background:var(--card,#16181c);border-radius:14px;padding:10px 12px}
+.lt-k{font-size:12px;opacity:.65}
+.lt-v{font-size:17px;font-weight:700;margin-top:2px}
+.lt-card{background:var(--card,#16181c);border-radius:18px;padding:14px;margin:10px 0;transition:transform .12s ease}
+.lt-card:active{transform:scale(.985)}
+.lt-top{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.lt-time{margin-left:auto;font-size:12px}
+.lt-name{font-size:18px;font-weight:800;margin:8px 0 4px}
+.lt-line{font-size:14px;margin:3px 0}
+.lt-pnl{font-size:20px;font-weight:800;margin:6px 0 2px}
+.lt-card .btn-row{margin-top:10px}
+.lt-new{animation:ltin .55s cubic-bezier(.2,.9,.3,1.2) both,flash 1.6s ease-out .1s}
+@keyframes ltin{from{transform:translateY(-14px) scale(.97);opacity:0}to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){.lt-new{animation:none}}

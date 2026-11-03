@@ -61,6 +61,9 @@ class Store:
             "coins": {}, "audits": {}, "agents": {},
         }
         self.last_push: float | None = None
+        # live-trades feed from the read-only sidecar; does NOT count as a desk push (offline detection stays honest)
+        self.tradefeed: dict | None = None
+        self.tradefeed_at: float | None = None
         # commands from the phone, waiting for the desk
         self.commands: dict[str, dict] = {}
         self.cmd_event = asyncio.Event()
@@ -164,6 +167,18 @@ async def desk_push(req: Request):
                     S.snap[k][key] = val
     S.last_push = time.time()
     return {"ok": True, "last_push": S.last_push}
+
+
+@app.post("/desk/tradefeed")
+async def desk_tradefeed(req: Request):
+    if not _desk_auth(req):
+        return UNAUTH()
+    body = await _json_body(req)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "json object required"}, status_code=400)
+    S.tradefeed = body
+    S.tradefeed_at = time.time()
+    return {"ok": True}
 
 
 @app.post("/desk/event")
@@ -348,6 +363,18 @@ async def api_mode(req: Request):
 
 
 TRADE_CONFIRM = "LIVE WALLET"
+
+
+@app.get("/api/tradefeed")
+async def api_tradefeed(req: Request):
+    if not _app_auth(req):
+        return UNAUTH()
+    if S.tradefeed is None:
+        return JSONResponse({"error": "not_found", "items": [], "summary": None}, status_code=404,
+                            headers={"Cache-Control": "no-store"})
+    age = time.time() - (S.tradefeed_at or 0)
+    return JSONResponse({**S.tradefeed, "feedAge": round(age, 1), "deskLastPush": S.last_push},
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/autotrade")

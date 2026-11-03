@@ -1,6 +1,6 @@
 /* Desk service worker: network-first app shell, never caches /api. Web push is a stub. */
-const CACHE = "desk-shell-v2";
-const SHELL = ["/", "/index.html", "/app.css?v=2", "/app.js?v=2", "/chart.js?v=1", "/manifest.json", "/icons/apple-touch-icon.png"];
+const CACHE = "desk-shell-v3";
+const SHELL = ["/", "/index.html", "/app.css?v=3", "/app.js?v=3", "/chart.js?v=1", "/manifest.json", "/icons/apple-touch-icon.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener("activate", (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener("fetch", (e) => {
