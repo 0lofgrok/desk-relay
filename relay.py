@@ -57,7 +57,7 @@ app = FastAPI(title="desk-relay", docs_url=None, redoc_url=None, openapi_url=Non
 class Store:
     def __init__(self) -> None:
         self.snap: dict[str, Any] = {
-            "state": None, "chart": None, "activity": None, "account": None, "settings": None,
+            "state": None, "chart": None, "activity": None, "account": None, "settings": None, "autotrade": None,
             "coins": {}, "audits": {}, "agents": {},
         }
         self.last_push: float | None = None
@@ -150,7 +150,7 @@ async def desk_push(req: Request):
     body = await _json_body(req)
     if not isinstance(body, dict):
         return JSONResponse({"error": "json object required"}, status_code=400)
-    for k in ("state", "chart", "activity", "account", "settings"):
+    for k in ("state", "chart", "activity", "account", "settings", "autotrade"):
         if k in body:
             S.snap[k] = body[k]
     # keyed collections merge per key; a null value removes the key
@@ -320,6 +320,8 @@ async def api_settings_post(req: Request):
     body = await _json_body(req)
     if not isinstance(body, dict) or not body:
         return JSONResponse({"error": "settings object required"}, status_code=400)
+    if any(str(k).strip().lower() in ("trade.mode", "mode", "desk.mode") for k in body):
+        return JSONResponse({"error": "use the mode switch"}, status_code=400)
     return _accepted(_queue_command("settings", body))
 
 
@@ -343,6 +345,38 @@ async def api_mode(req: Request):
     if mode == "LIVE" and body.get("confirm") != "LIVE":
         return JSONResponse({"error": "LIVE requires {\"confirm\":\"LIVE\"}"}, status_code=400)
     return _accepted(_queue_command("mode", {"mode": mode}))
+
+
+TRADE_CONFIRM = "LIVE WALLET"
+
+
+@app.get("/api/autotrade")
+async def api_autotrade(req: Request):
+    return _snap_response(S.snap["autotrade"]) if _app_auth(req) else UNAUTH()
+
+
+@app.post("/api/autotrade/mode")
+async def api_autotrade_mode(req: Request):
+    if not _app_auth(req):
+        return UNAUTH()
+    body = await _json_body(req) or {}
+    mode = str(body.get("mode", "")).strip().upper().replace(" ", "_") if isinstance(body, dict) else ""
+    if mode not in ("OFF", "TEST", "LIVE_WALLET"):
+        return JSONResponse({"error": "mode must be OFF, TEST or LIVE_WALLET"}, status_code=400)
+    if mode == "LIVE_WALLET" and body.get("confirm") != TRADE_CONFIRM:
+        return JSONResponse({"error": f"LIVE_WALLET requires typing exactly \"{TRADE_CONFIRM}\""}, status_code=400)
+    payload = {"mode": mode}
+    if mode == "LIVE_WALLET":
+        payload["confirm"] = TRADE_CONFIRM
+    return _accepted(_queue_command("trade_mode", payload))
+
+
+@app.post("/api/autotrade/stop")
+async def api_autotrade_stop(req: Request):
+    if not _app_auth(req):
+        return UNAUTH()
+    body = await _json_body(req) or {}
+    return _accepted(_queue_command("trade_stop", {"sellAll": bool(isinstance(body, dict) and body.get("sellAll") is True)}))
 
 
 @app.post("/api/push")

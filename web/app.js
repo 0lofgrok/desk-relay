@@ -60,7 +60,7 @@
   const token = () => { try { return localStorage.getItem(TK) || ""; } catch (_) { return ""; } };
 
   /* ================================================================ store + network */
-  const C = { state: null, chart: {}, activity: null, account: null, settings: null, coin: {}, audit: {}, agent: {} };
+  const C = { state: null, chart: {}, activity: null, account: null, settings: null, autotrade: null, coin: {}, audit: {}, agent: {} };
   const NET = { offline: false, authFail: false, lastPush: null, retryAt: 0, backoff: 5, timer: 0 };
   const PENDING = new Map();   // optimistic overrides: "pause:scanner" / "set:risk.stop_pct" -> {value, until}
   const CMDS = new Map();      // relay command id -> label, matched with SSE command_result
@@ -379,12 +379,15 @@
       <div class="chart-wrap"><canvas id="h-chart"></canvas><div class="chart-empty hidden" id="h-chart-empty"></div></div>
       <div class="ranges" id="h-ranges">${RANGES.map((r) => `<button class="pill tap ${r === homeRange ? "on" : ""}" data-r="${r}">${r === "LIVE" ? '<i class="ldot"></i>' : ""}${r}</button>`).join("")}</div>
       <div id="h-needs"></div>
+      <div id="h-trade"></div>
       <section class="sec"><div class="sec-h"><h2 id="h-agents-h">Agents</h2><button class="link tap" data-go="#/agents">See all</button></div>
         <div class="hscroll" id="h-cards"></div><div class="dots" id="h-dots">${AGENTS.map((_, i) => `<i class="${i ? "" : "on"}"></i>`).join("")}</div></section>
       <section class="sec"><div class="sec-h"><h2>Activity</h2><button class="link tap" data-go="#/activity">See all</button></div><div id="h-act"></div></section>`;
     const chart = new Charts.Line($("#h-chart", v));
     $("#h-av", v).onclick = $("#h-name", v).onclick = () => (location.hash = "#/account");
     $$("[data-go]", v).forEach((b) => (b.onclick = () => (location.hash = b.dataset.go)));
+    $("#h-trade", v).addEventListener("click", (e) => { const st = e.target.closest("[data-tstop]"); if (st) { haptic(); return tradeStop(st); }
+      const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; } });
     $("#h-ranges", v).addEventListener("click", (e) => {
       const b = e.target.closest("[data-r]"); if (!b || b.dataset.r === homeRange) return; haptic();
       homeRange = b.dataset.r; $$("#h-ranges .pill", v).forEach((x) => x.classList.toggle("on", x === b));
@@ -403,6 +406,7 @@
 
     async function load() {
       if (!C.account) loadAccount().then(() => cur && cur.update && cur.update()).catch(() => {});
+      loadTrade().then(() => cur && cur.update && cur.update()).catch(() => {});
       await all([loadState(), loadActivity(),
         api("/api/chart?range=" + homeRange).then((d) => { C.chart[homeRange] = d && d[homeRange] ? d[homeRange] : d; })]);
     }
@@ -437,6 +441,7 @@
         if (sig !== chart._sig) { chart._sig = sig; chart.setData(pts, mk, start); }
       }
       renderNeeds(v, st);
+      const ht = $("#h-trade", v); if (ht) { const h = tradeHomeCard(C.autotrade); if (ht._h !== h) { ht._h = h; ht.innerHTML = h; } }
       const A = agentsOf(st);
       const running = num(pick(st || {}, "agentsRunning")) ?? AGENTS.filter((a) => A[a.key] && agentPaused(a.key, A[a.key]) === false).length;
       $("#h-agents-h", v).textContent = st ? `Agents · ${running} running` : "Agents";
@@ -917,6 +922,7 @@
           <div class="row tap" data-url="profile"><div class="av" style="background:var(--blue-d);color:var(--blue)">${icon("account", "chev")}</div><div class="main"><div class="t">Your FOMO profile</div><div class="s">${A.fomo_handle ? "@" + esc(A.fomo_handle) : "Not linked yet"}</div></div>${icon("ext", "chev")}</div>
           <div class="row tap" data-url="invite"><div class="av" style="background:var(--green-d);color:var(--green)">${icon("share", "chev")}</div><div class="main"><div class="t">Invite a friend</div><div class="s">Share your FOMO link</div></div>${icon("chev", "chev")}</div>
         </div></div>
+        <div class="sec"><div class="group"><div class="row tap" data-gotrade><div class="av" style="background:var(--red-d);color:var(--red)">${icon("executor")}</div><div class="main"><div class="t">Auto-trade wallet</div><div class="s">Mode, STOP, test orders, positions</div></div>${icon("chev", "chev")}</div></div></div>
         <div class="sec"><div class="sec-h"><h2>Notifications</h2></div><div class="group plain">
           <div class="row"><div class="av" style="background:#5865f2;color:#fff">${icon("bell", "chev")}</div><div class="main"><div class="t">${esc(n.label || cap(n.kind) || "Discord")}</div><div class="s">Notifications go to your Discord</div></div><span class="chip ${n.connected === false ? "red" : n.connected ? "green" : "grey"}">${n.connected === false ? "Not connected" : n.connected ? "Connected" : "n/a"}</span></div>
           <div class="row"><div class="main"><div class="t">Send test push</div><div class="s">${A.webPush && A.webPush.enabled === false ? "Web push is off · the desk answers in a toast" : "Sends a test notification"}</div></div><button class="btn sm blue" id="x-test">Send</button></div>
@@ -954,6 +960,7 @@
     };
     v.onclick = async (e) => {
       const t = e.target;
+      if (t.closest("[data-gotrade]")) { haptic(); location.hash = "#/trade"; return; }
       const md = t.closest("[data-mode]");
       if (md) { haptic();
         const want = md.dataset.mode, curM = String((C.account && C.account.mode) || mode()).toUpperCase(); if (want === curM) return;
@@ -1000,7 +1007,108 @@
     return { load, update, unmount: () => { v.onclick = v.oninput = v.onchange = null; } };
   }
 
-  const SCREENS = { home: homeScreen, agents: agentsScreen, activity: activityScreen, account: accountScreen, coin: coinScreen, audit: auditScreen };
+  /* ================================================================ AUTO-TRADE (separate PumpPortal wallet; FOMO untouched) */
+  const TRADE_PHRASE = "LIVE WALLET";
+  const loadTrade = async () => { try { C.autotrade = await api("/api/autotrade"); } catch (e) { if (e && e.status === 404) C.autotrade = C.autotrade || null; else throw e; } };
+  const tradeModeLabel = (m) => ({ OFF: "OFF", TEST: "TEST", LIVE_WALLET: "LIVE WALLET" }[m] || "OFF");
+  const tradeChip = (m) => `<span class="chip ${m === "LIVE_WALLET" ? "red" : m === "TEST" ? "amber" : "grey"}">${esc(tradeModeLabel(m))}</span>`;
+  function tradeStop(btn) {
+    const T = C.autotrade || {};
+    const n = (T.positions || []).length;
+    return post(btn, "/api/autotrade/stop", { sellAll: false }, { ok: "Auto-trade STOPPED", okSub: "Mode OFF · no new buys" }).then((r) => {
+      if (!r) return;
+      if (C.autotrade) C.autotrade.mode = "OFF";
+      if (cur && cur.update) cur.update();
+      if (n) sheet(`<h3>Sell ${n} open position${n > 1 ? "s" : ""} too?</h3><p>Auto-trade is OFF. Open positions still have their stop and trail exits. Sell everything now at market (15% slippage)?</p>
+        <div class="btn-row"><button class="btn ghost" data-x>Keep them</button><button class="btn red" data-ok>Sell all now</button></div>`,
+        (sh, close) => { $("[data-x]", sh).onclick = close;
+          $("[data-ok]", sh).onclick = async () => { const ok = $("[data-ok]", sh); const r2 = await post(ok, "/api/autotrade/stop", { sellAll: true }, { ok: "Selling all positions", okSub: "The desk confirms in a few seconds" }); if (r2) close(); }; });
+    });
+  }
+  function tradeHomeCard(T) {
+    if (!T) return "";
+    const m = T.mode || "OFF", t = T.today || {}, pos = (T.positions || []).length;
+    return `<section class="sec"><div class="sec-h"><h2>Auto-trade</h2><button class="link tap" data-go="#/trade">Open</button></div>
+      <div class="group plain"><div class="row tap" data-go="#/trade"><div class="main"><div class="t">Wallet auto-trade ${tradeChip(m)}</div>
+        <div class="s">Today ${esc(fmtSigned(t.total))} · ${pos} open · max ${esc(fmtUsd((T.caps || {}).maxPerTradeUsd, 0))}/trade</div></div>${icon("chev", "chev")}</div>
+      ${m !== "OFF" ? `<div class="row"><button class="btn red full stopbtn" data-tstop>STOP auto-trade</button></div>` : ""}</div></section>`;
+  }
+  function tradeScreen(v) {
+    v.innerHTML = `<header class="hdr"><button class="back tap" id="t-back">${icon("back")}Back</button><div class="title" style="flex:1;text-align:center"><span>Auto-trade</span></div><span id="t-chip"></span></header>
+      <div class="offline-slot"></div><div id="t-body"></div>`;
+    $("#t-back", v).onclick = () => { haptic(); history.length > 1 ? history.back() : (location.hash = "#/"); };
+    async function load() { await loadTrade(); }
+    function update() {
+      const T = C.autotrade, body = $("#t-body", v);
+      if (!T) { body.innerHTML = `<div class="sec" style="margin-top:8px">${NET.offline ? emptyBox("executor", "No auto-trade data yet", "The desk sends it with the next update") : sk(120, "100%", 14) + sk(240, "100%", 14, 14)}</div>`; return; }
+      const m = T.mode || "OFF", c = T.caps || {}, w = T.wallet || {}, t = T.today || {};
+      $("#t-chip", v).innerHTML = tradeChip(m);
+      const lim = num(c.dailyLossLimitUsd), tot = num(t.total);
+      const row = (a, b, cls = "") => `<div class="row"><div class="main"><div class="t">${a}</div></div><div class="mono ${cls}">${b}</div></div>`;
+      const ordRow = (o) => `<div class="row tap" data-go="#/coin/${esc(encodeURIComponent(o.mint))}"><div class="main"><div class="t">${o.side === "buy" ? "Buy" : "Sell"} ${esc(o.symbol || (o.mint || "").slice(0, 6))} · ${esc(o.side === "buy" ? o.amount + " SOL" : o.amount)}${has(o.usd) ? " · " + esc(fmtUsd(o.usd)) : ""}</div>
+          <div class="s">${esc(fmtTime(o.ts))} · ${esc(o.mode === "TEST" ? "TEST" : "WALLET")} · slip ${esc(o.slippage)}% · prio ${esc(o.priorityFee)} SOL · ${esc(o.pool)}${o.reason ? " · " + esc(o.reason) : ""}${o.error ? " · " + esc(o.error) : ""}</div></div>
+          <span class="chip ${o.status === "confirmed" || o.status === "sent" ? "green" : o.status === "failed" || o.status === "refused" ? "red" : "grey"}">${esc(o.status === "test" ? "test · not sent" : o.status)}</span></div>`;
+      const posRow = (p) => `<div class="row tap" data-go="#/coin/${esc(encodeURIComponent(p.mint))}"><div class="main"><div class="t">${esc(p.symbol || p.mint.slice(0, 6))} · ${esc(p.mode === "TEST" ? "TEST" : "WALLET")}</div>
+          <div class="s">${esc(fmtTime(p.openedAt))} · cost ${esc(fmtUsd(p.costUsd))} · entry ${esc(fmtPrice(p.entryPrice))} · now ${esc(fmtPrice(p.lastPrice))}</div></div><div class="mono ${num(p.pnlUsd) < 0 ? "red" : "green"}">${esc(fmtSigned(p.pnlUsd))}</div></div>`;
+      body.innerHTML = `
+        <div class="sec" style="margin-top:8px"><button class="btn red full stopbtn" data-tstop ${m === "OFF" ? "disabled" : ""}>${m === "OFF" ? "Auto-trade is OFF" : "STOP"}</button>
+          <div class="s muted" style="margin-top:6px;text-align:center">STOP turns auto-trade OFF at once. You then choose whether to sell open positions.</div></div>
+        <div class="sec"><div class="sec-h"><h2>Mode</h2></div><div class="group plain">
+          <div class="row"><div class="seg" style="width:100%"><button class="${m === "OFF" ? "on" : ""}" data-tmode="OFF">OFF</button><button class="${m === "TEST" ? "on paper" : ""}" data-tmode="TEST">TEST</button><button class="${m === "LIVE_WALLET" ? "on live" : ""}" data-tmode="LIVE_WALLET">LIVE WALLET</button></div></div>
+          <div class="row"><div class="main s wrap">${m === "LIVE_WALLET" ? "Real orders from the wallet via PumpPortal Lightning." : m === "TEST" ? "Builds the exact order and records it. Nothing is sent." : "No new buys."} Your FOMO account is never touched.</div></div>
+          ${T.kill ? `<div class="row"><div class="main s amber wrap">Kill switch tripped ${esc(fmtTime(T.kill.at))}: ${esc(T.kill.why)}</div></div>` : ""}
+        </div></div>
+        <div class="sec"><div class="sec-h"><h2>Today</h2></div><div class="group plain">
+          ${row("Realized", esc(fmtSigned(t.realized)), num(t.realized) < 0 ? "red" : "")}
+          ${row("Open (est.)", esc(fmtSigned(t.unrealized)), num(t.unrealized) < 0 ? "red" : "")}
+          ${row("Total vs limit", `${esc(fmtSigned(tot))} / -${esc(fmtUsd(lim, 0))}`, tot !== null && lim && tot <= -lim * 0.75 ? "red" : "")}
+        </div></div>
+        <div class="sec"><div class="sec-h"><h2>Wallet</h2></div><div class="group plain">
+          <div class="row"><div class="main"><div class="t">Address</div><div class="s mono wrap" style="word-break:break-all">${w.pubkey ? esc(w.pubkey) : "Not set · add the public address in Account › Auto-trade"}</div></div></div>
+          ${row("Balance", w.sol !== null && w.sol !== undefined ? `${esc((+w.sol).toFixed(4))} SOL${has(w.usd) ? " · " + esc(fmtUsd(w.usd)) : ""}` : "n/a")}
+          ${row("PumpPortal key", T.apiKeySaved ? '<span class="chip green">Saved on desk</span>' : '<span class="chip red">Missing</span>')}
+        </div></div>
+        <div class="sec"><div class="sec-h"><h2>Caps</h2><button class="link tap" data-go="#/account/trade">Edit</button></div><div class="group plain">
+          ${row("Max per trade (fees in)", esc(fmtUsd(c.maxPerTradeUsd)))}
+          ${row("Daily loss limit", esc(fmtUsd(c.dailyLossLimitUsd)) + " → OFF")}
+          ${row("Max open positions", esc(c.maxOpenPositions))}
+          ${row("SOL reserve (never spent)", esc(c.reserveSol) + " SOL")}
+          ${row("Slippage · priority fee", `${esc(c.slippagePct)}% · ${esc(c.priorityFeeSol)} SOL`)}
+          ${row("PumpPortal fee", esc(c.platformFeePct) + "% per trade")}
+        </div></div>
+        <div class="sec"><div class="sec-h"><h2>Open positions</h2></div><div class="group plain">${(T.positions || []).length ? T.positions.map(posRow).join("") : `<div class="row"><div class="main s">None</div></div>`}</div></div>
+        <div class="sec"><div class="sec-h"><h2>Orders</h2></div><div class="group plain">${(T.orders || []).length ? T.orders.map(ordRow).join("") : `<div class="row"><div class="main s">No orders yet. In TEST, every order the desk would send shows here.</div></div>`}</div></div>
+        ${(T.closed || []).length ? `<div class="sec"><div class="sec-h"><h2>Closed</h2></div><div class="group plain">${T.closed.map((p) => `<div class="row"><div class="main"><div class="t">${esc(p.symbol || p.mint.slice(0, 6))} · ${esc(p.mode === "TEST" ? "TEST" : "WALLET")}</div><div class="s">${esc(fmtTime(p.closedAt))} · ${esc(p.reason || "")}</div></div><div class="mono ${num(p.pnlUsd) < 0 ? "red" : "green"}">${esc(fmtSigned(p.pnlUsd))}</div></div>`).join("")}</div></div>` : ""}
+        ${T.lastError ? `<div class="foot">Last error: ${esc(T.lastError)}</div>` : ""}`;
+    }
+    function liveWalletSheet() {
+      const T = C.autotrade || {}, w = T.wallet || {}, c = T.caps || {};
+      const blocked = !w.pubkey ? "Set the wallet address first (Account › Auto-trade)" : !T.apiKeySaved ? "PumpPortal key missing on the desk" : null;
+      sheet(`<h3>Switch to LIVE WALLET</h3><p>The desk will send real buy and sell orders from the PumpPortal wallet${w.pubkey ? " " + esc(String(w.pubkey).slice(0, 4) + "…" + String(w.pubkey).slice(-4)) : ""}. Max ${esc(fmtUsd(c.maxPerTradeUsd))} per trade, ${esc(c.maxOpenPositions)} open, OFF after -${esc(fmtUsd(c.dailyLossLimitUsd, 0))} in a day. Your FOMO account is not used.</p>
+        ${blocked ? `<div class="warnrow">${esc(blocked)}</div>` : ""}
+        <p style="margin-top:10px">Type <b>${TRADE_PHRASE}</b> to confirm.</p>
+        <input class="txt" id="lw-in" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="${TRADE_PHRASE}" aria-label="Type ${TRADE_PHRASE}">
+        <div class="btn-row"><button class="btn ghost" data-x>Cancel</button><button class="btn red" data-ok disabled>Go LIVE WALLET</button></div>`,
+        (sh, close) => {
+          const inp = $("#lw-in", sh), ok = $("[data-ok]", sh);
+          inp.addEventListener("input", () => (ok.disabled = inp.value.trim() !== TRADE_PHRASE));
+          $("[data-x]", sh).onclick = close;
+          ok.onclick = async () => { const r = await post(ok, "/api/autotrade/mode", { mode: "LIVE_WALLET", confirm: inp.value.trim() }, { ok: "Switching to LIVE WALLET", okSub: "The desk checks the wallet and confirms" }); if (r) close(); };
+          setTimeout(() => inp.focus(), 350);
+        });
+    }
+    v.onclick = (e) => {
+      const st = e.target.closest("[data-tstop]"); if (st) { haptic(); return tradeStop(st); }
+      const md = e.target.closest("[data-tmode]");
+      if (md) { haptic(); const want = md.dataset.tmode, curM = (C.autotrade && C.autotrade.mode) || "OFF"; if (want === curM) return;
+        if (want === "LIVE_WALLET") return liveWalletSheet();
+        return post(md, "/api/autotrade/mode", { mode: want }, { ok: "Auto-trade → " + tradeModeLabel(want), okSub: want === "TEST" ? "Orders are recorded, never sent" : "No new buys" }); }
+      const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; }
+    };
+    return { load, update, unmount: () => { v.onclick = null; } };
+  }
+
+  const SCREENS = { trade: tradeScreen, home: homeScreen, agents: agentsScreen, activity: activityScreen, account: accountScreen, coin: coinScreen, audit: auditScreen };
 
   /* ================================================================ SSE: live trades + activity */
   let es = null, esRetry = 0, lastSeq = 0;
