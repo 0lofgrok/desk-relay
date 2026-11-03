@@ -1,4 +1,4 @@
-/* Grok Bot desk service worker: network-first app shell, never caches /api. Web push is a stub. */
+/* Desk service worker: network-first app shell, never caches /api. Web push is a stub. */
 const CACHE = "desk-shell-v1";
 const SHELL = ["/", "/index.html", "/app.css?v=1", "/app.js?v=1", "/chart.js?v=1", "/manifest.json", "/icons/apple-touch-icon.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {})); self.skipWaiting(); });
@@ -12,6 +12,6 @@ self.addEventListener("fetch", (e) => {
 // Stub: notifications go to Discord in this hosting. Kept so web push can be enabled later.
 self.addEventListener("push", (e) => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch (_) {}
-  e.waitUntil(self.registration.showNotification(d.title || "Grok Bot · now", { body: d.body || "", icon: d.icon || "/icons/icon-192.png", data: { url: d.url || "/" } }));
+  e.waitUntil(self.registration.showNotification(d.title || "Desk · now", { body: d.body || "", icon: d.icon || "/icons/icon-192.png", data: { url: d.url || "/" } }));
 });
 self.addEventListener("notificationclick", (e) => { e.notification.close(); e.waitUntil(self.clients.openWindow((e.notification.data && e.notification.data.url) || "/")); });

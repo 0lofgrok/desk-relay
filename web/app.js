@@ -1,4 +1,4 @@
-/* Grok Bot desk – iPhone web app. Plain JS, no framework, no build step.
+/* Desk – iPhone web app. Plain JS, no framework, no build step.
    Reads the relay at the same origin (shapes: /workspace/desk/API_SHAPES.md).
    Token: #t= once -> localStorage -> Authorization: Bearer. Only EventSource /api/stream uses ?t=. */
 (function () {
@@ -38,15 +38,25 @@
 
   /* ================================================================ token */
   const TK = "desk_token";
-  (function grabToken() {
+  // Accepts a full private link (…#t=TOKEN, also ?t= / &t=) or a bare token. Never logged.
+  function parseTok(raw) {
+    const x = String(raw || "").trim();
+    const m = x.match(/[#?&]t=([^&#\s]+)/);
+    let t = m ? m[1] : (/^[A-Za-z0-9._~+\/=-]{8,}$/.test(x) ? x : "");
+    try { t = decodeURIComponent(t); } catch (_) {}
+    return /^[A-Za-z0-9._~+\/=-]{8,}$/.test(t) ? t : "";
+  }
+  // Store #t= BEFORE stripping it; runs on every load and every hashchange.
+  function grabToken() {
     const h = location.hash || "";
     const m = h.match(/[#&]t=([^&]+)/);
-    if (m) {
-      try { localStorage.setItem(TK, decodeURIComponent(m[1])); } catch (_) {}
-      const rest = h.replace(/[#&]t=[^&]+/, "").replace(/^[#&]+/, "");
-      history.replaceState(null, "", location.pathname + location.search + (rest ? "#" + rest : "#/"));
-    }
-  })();
+    if (!m) return false;
+    const t = parseTok("#t=" + m[1]);
+    if (t) { try { localStorage.setItem(TK, t); } catch (_) {} NET.authFail = false; }
+    const rest = h.replace(/[#&]t=[^&]+/, "").replace(/^[#&]+/, "");
+    history.replaceState(null, "", location.pathname + location.search + (rest ? "#" + rest : "#/"));
+    return !!t;
+  }
   const token = () => { try { return localStorage.getItem(TK) || ""; } catch (_) { return ""; } };
 
   /* ================================================================ store + network */
@@ -102,7 +112,7 @@
     const kind = o.kind || "info";
     const col = { ok: "var(--green)", err: "var(--red)", warn: "var(--orange)", buy: "var(--blue)", info: "var(--card2)" }[kind];
     const fg = kind === "ok" || kind === "warn" ? "#000" : "#fff";
-    const glyph = { ok: "✓", err: "!", warn: "!", buy: "$", info: "G" }[kind];
+    const glyph = { ok: "✓", err: "!", warn: "!", buy: "$", info: "D" }[kind];
     el.className = "toast tap toast-" + kind;
     el.innerHTML = (o.coin ? avatar(o.coin, "ti") : `<div class="ti" style="background:${col};color:${fg}">${glyph}</div>`) +
       `<div style="min-width:0;flex:1"><div class="tt">${esc(o.title)}</div>${o.sub ? `<div class="ts">${esc(o.sub)}</div>` : ""}</div><div class="tm">${esc(o.when || "now")}</div>`;
@@ -256,7 +266,7 @@
     const [name, arg] = h.split("/");
     return { name: name || "home", arg: arg ? decodeURIComponent(arg) : "" };
   }
-  window.addEventListener("hashchange", () => render());
+  window.addEventListener("hashchange", () => { if (grabToken()) { stopStream(); C.account = null; startStream(); } render(); });
   $$("#tabbar button").forEach((b) => b.addEventListener("click", () => {
     haptic(); const t = b.dataset.tab;
     if (route().name === t || (t === "home" && route().name === "home")) { view().scrollTo({ top: 0, behavior: RM() ? "auto" : "smooth" }); return; }
@@ -271,7 +281,7 @@
     const pushed = r.name === "coin" || r.name === "audit";
     $("#tabbar").classList.toggle("hide", pushed);
     v.classList.toggle("pushed", pushed);
-    if (!token() || NET.authFail) { v.innerHTML = authScreen(); return; }
+    if (!token() || NET.authFail) { $("#tabbar").classList.add("hide"); v.innerHTML = authScreen(); wireAuth(v); return; }
     const S = SCREENS[r.name] || SCREENS.home;
     cur = S(v, r.arg) || {};
     if (cur.update) cur.update();
@@ -279,9 +289,43 @@
     v.onscroll = () => { const h = $(".hdr", v); h && h.classList.toggle("scrolled", v.scrollTop > 4); };
     refresh();
   }
+  const STANDALONE = () => (window.navigator.standalone === true) || (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
   function authScreen() {
-    return `<header class="hdr"><div class="title"><span>Grok Bot</span></div></header>` +
-      emptyBox("lock", NET.authFail && token() ? "This link has expired" : "Open your private link", "Open the app from the private link the desk sent you. It signs this iPhone in once, then you can add it to your Home Screen.");
+    const expired = NET.authFail && !!token();
+    const hint = STANDALONE()
+      ? "Home Screen apps don't share Safari's sign-in. Copy your private link and paste it here once."
+      : "Open the private link the desk sent you, or paste it here. It signs this iPhone in once.";
+    return `<header class="hdr"><div class="title"><span>Desk</span></div></header>` +
+      emptyBox("lock", expired ? "This link has expired" : "Paste your private link", hint) +
+      `<form id="signin" class="signin" autocomplete="off" novalidate>
+        <label for="tok-in" class="sr">Private link or token</label>
+        <input id="tok-in" class="tokf" type="password" name="desk-link" placeholder="Paste your private link" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" inputmode="url">
+        <button id="tok-go" class="btn green full" type="submit">Sign in</button>
+      </form>`;
+  }
+  function wireAuth(v) {
+    const f = $("#signin", v), inp = $("#tok-in", v), b = $("#tok-go", v);
+    if (!f) return;
+    if (STANDALONE()) setTimeout(() => { try { inp.focus(); } catch (_) {} }, 300);
+    f.onsubmit = async (e) => {
+      e.preventDefault(); haptic();
+      const t = parseTok(inp.value);
+      if (!t) { toast({ title: "That isn't a private link", sub: "Paste the whole link, or just the token", kind: "err" }); return; }
+      b.disabled = true; b.classList.add("busy"); const lbl = b.textContent; b.textContent = "Signing in…";
+      let st = 0;
+      try { const r = await fetch("/api/state", { cache: "no-store", headers: { Authorization: "Bearer " + t } }); st = r.status; } catch (_) { st = 0; }
+      b.disabled = false; b.classList.remove("busy"); b.textContent = lbl;
+      if (st === 200 || st === 503) {            // 503 = token good, desk just stale
+        try { localStorage.setItem(TK, t); } catch (_) {}
+        inp.value = ""; NET.authFail = false; C.account = null;
+        toast({ title: "Signed in", sub: st === 503 ? "Desk is offline right now · retrying" : "This iPhone is connected", kind: "ok" });
+        stopStream(); startStream(); if (location.hash && location.hash !== "#/") location.hash = "#/"; else render();
+      } else if (st === 401 || st === 403) {
+        inp.value = ""; toast({ title: "Link not accepted", sub: "Check you copied the newest private link", kind: "err" });
+      } else {
+        toast({ title: "Can't reach the desk", sub: "Check your connection and try again", kind: "err" });
+      }
+    };
   }
   let inflight = false, again = false;
   async function refresh() {
@@ -770,7 +814,7 @@
       const res = $("#u-res", v);
       res.innerHTML = !done ? `<div class="verdict"><div class="big" style="background:var(--cyan-d);color:var(--cyan)">${icon("auditor")}</div><div><div style="font-weight:700;font-size:18px">Taking apart...</div><div class="muted">${Math.min(shown, 8)}/8 parts read</div></div></div>`
         : a.passed ? `<div class="verdict"><div class="big" style="background:var(--green-d);color:var(--green)">${icon("check")}</div><div><div style="font-weight:700;font-size:18px">${esc(a.headline || "Cleared · 8/8 parts")}</div><div class="muted">${esc(a.subline || "Sent to Executor")}</div></div></div>`
-        : `<div class="verdict"><div class="big" style="background:var(--red-d);color:var(--red)">${icon("x")}</div><div><div style="font-weight:700;font-size:18px">${esc(a.headline || "Rejected · " + (a.reason || ""))}</div><div class="muted">${esc(a.subline || "Grok Bot won't buy " + coinName(a))}</div></div></div>`;
+        : `<div class="verdict"><div class="big" style="background:var(--red-d);color:var(--red)">${icon("x")}</div><div><div style="font-weight:700;font-size:18px">${esc(a.headline || "Rejected · " + (a.reason || ""))}</div><div class="muted">${esc(a.subline || "Desk won't buy " + coinName(a))}</div></div></div>`;
     }
     function update() {
       const body = $("#u-body", v), bar = $("#u-bar", v), a = A();
@@ -878,7 +922,7 @@
           <div class="row"><div class="main"><div class="t">Send test push</div><div class="s">${A.webPush && A.webPush.enabled === false ? "Web push is off · the desk answers in a toast" : "Sends a test notification"}</div></div><button class="btn sm blue" id="x-test">Send</button></div>
         </div></div>
         ${settingGroups().map((g) => `<div class="sec" id="set-${esc(g.id.replace(".", "-"))}"><div class="sec-h"><h2>${esc(g.title)}</h2></div><div class="group plain">${g.rows.map(settingRow).join("")}</div></div>`).join("")}
-        <div class="foot">${esc(A.version || "Grok Bot desk")} · ${esc(location.host)}<br>FOMO has no order API · money only moves when you buy on FOMO</div>`;
+        <div class="foot">${esc(A.version || "Desk")} · ${esc(location.host)}<br>FOMO has no order API · money only moves when you buy on FOMO</div>`;
       $$("input[type=range]", body).forEach(paintRange);
       if (!built && focus) { const el = $("#set-" + focus.replace(".", "-"), v); if (el) v.scrollTop = el.offsetTop - 64; }
       else v.scrollTop = sy;
@@ -968,6 +1012,7 @@
     es.onopen = () => { esRetry = 0; };
     es.onerror = () => { if (es && es.readyState === 2) { es = null; setTimeout(startStream, Math.min(30000, 2000 * ++esRetry)); } };
   }
+  function stopStream() { if (es) { try { es.close(); } catch (_) {} es = null; } }
   window.addEventListener("online", () => { refresh(); if (!es) startStream(); });
   function onEvent(type, d) {
     if (type === "hello") { if (d.offline) goOffline(); return; }
@@ -1010,7 +1055,7 @@
       case "verdict": case "scan": softRefresh(); return;
     }
     if (t) {
-      t.coin = c.symbol || c.name ? c : null; t.sub = "Grok Bot · " + t.sub; t.ms = 2000;
+      t.coin = c.symbol || c.name ? c : null; t.sub = "Desk · " + t.sub; t.ms = 2000;
       if (d.mint) t.href = "#/coin/" + encodeURIComponent(d.mint);
       toast(t); recentPush.unshift({ ...d, _at: Date.now(), _title: t.title }); recentPush.length = Math.min(recentPush.length, 50); bellDot();
     }
@@ -1023,6 +1068,7 @@
   /* ================================================================ boot */
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("/sw.js").catch(() => {});
   document.addEventListener("touchstart", () => {}, { passive: true }); // :active on iOS
+  grabToken();
   render();
   startStream();
 })();

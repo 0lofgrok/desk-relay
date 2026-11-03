@@ -357,3 +357,9 @@ input.numf[readonly]{color:var(--muted)}
 .toast-err{box-shadow:0 8px 30px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,69,58,.35)}
 .nav-av svg{width:20px;height:20px;color:var(--muted)}
 .av{overflow:visible}.av img{border-radius:50%}
+
+/* lock screen sign-in */
+.signin{display:flex;flex-direction:column;gap:12px;padding:0 20px 24px}
+input.tokf{width:100%;min-height:50px;border-radius:12px;border:0;background:var(--card2);color:var(--text);padding:0 14px;font-size:17px;-webkit-user-select:text;user-select:text}
+input.tokf:focus{outline:2px solid var(--blue)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}

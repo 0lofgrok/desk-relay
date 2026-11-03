@@ -1,8 +1,8 @@
 {
-  "name": "Grok Bot",
-  "short_name": "Grok Bot",
-  "description": "Grok Bot trading desk",
-  "start_url": "/#/",
+  "name": "Desk",
+  "short_name": "Desk",
+  "description": "Your trading desk",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
