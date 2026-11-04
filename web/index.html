@@ -13,7 +13,7 @@
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
-<link rel="stylesheet" href="/app.css?v=4">
+<link rel="stylesheet" href="/app.css?v=5">
 <title>Desk</title>
 </head>
 <body>
@@ -38,17 +38,19 @@
     <symbol id="i-ext" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path fill="currentColor" d="M20 15.3A8.5 8.5 0 0 1 8.7 4 8.5 8.5 0 1 0 20 15.3"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><path fill="currentColor" d="M7 10V7a5 5 0 0 1 10 0v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm2 0h6V7a3 3 0 0 0-6 0z"/></symbol>
+    <symbol id="i-market" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M3 20h18M5 16l4-5 3 3 6-8M15 6h3v3"/></symbol>
   </defs>
 </svg>
 <div id="app"><main id="view" class="screen"></main></div>
 <nav class="tabbar" id="tabbar" aria-label="Tabs">
   <button data-tab="home" class="on" aria-label="Home"><svg><use href="#i-home"/></svg>Home</button>
+  <button data-tab="market" aria-label="Market"><svg><use href="#i-market"/></svg>Market</button>
   <button data-tab="agents" aria-label="Agents"><svg><use href="#i-agents"/></svg>Agents</button>
   <button data-tab="activity" aria-label="Activity"><svg><use href="#i-activity"/></svg>Activity</button>
   <button data-tab="account" aria-label="Account"><svg><use href="#i-account"/></svg>Account</button>
 </nav>
 <div id="toasts" aria-live="polite"></div>
-<script src="/chart.js?v=1"></script>
-<script src="/app.js?v=4"></script>
+<script src="/chart.js?v=3"></script>
+<script src="/app.js?v=5"></script>
 </body>
 </html>

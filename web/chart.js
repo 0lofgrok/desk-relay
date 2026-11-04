@@ -49,7 +49,9 @@
     }
     destroy() { cancelAnimationFrame(this.raf); this.ro.disconnect(); }
     // points: [[ts, value]], marks: [{ts, kind:'buy'|'sell'|'stop', label}], start: night-start value
-    setData(points, marks, start) {
+    // levels (optional): [{v, label, color, fg, fit}] dashed horizontal price levels; fit:false ones never stretch the y-range
+    setData(points, marks, start, levels) {
+      this.levels = (levels || []).filter((l) => l && isFinite(l.v) && l.v > 0);
       const p = (points || []).filter((q) => q && isFinite(q[0]) && isFinite(q[1]));
       this.from = this.pts.length ? { pts: this.pts, t0: this.pts[0][0], t1: this.pts[this.pts.length - 1][0] } : null;
       this.firstAnim = !this.pts.length && p.length > 1;
@@ -71,7 +73,8 @@
       let lo = Infinity, hi = -Infinity;
       for (const q of P) { lo = Math.min(lo, q[1]); hi = Math.max(hi, q[1]); }
       if (this.start != null) { lo = Math.min(lo, this.start); hi = Math.max(hi, this.start); }
-      if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+      for (const l of this.levels || []) if (l.fit !== false) { lo = Math.min(lo, l.v); hi = Math.max(hi, l.v); }
+      if (hi - lo < 1e-9) { const d = Math.abs(hi) > 1e-6 ? Math.abs(hi) * .01 : 1; hi += d; lo -= d; }
       const span = hi - lo; lo -= span * 0.1; hi += span * 0.05;
       const t0 = P[0][0], t1 = Math.max(P[P.length - 1][0], t0 + 1);
       // a new point slides in over 250ms: interpolate the x-domain from the previous one
@@ -90,6 +93,31 @@
         ctx.save(); ctx.setLineDash([3, 4]); ctx.strokeStyle = "rgba(235,235,245,.3)"; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(w, sy); ctx.stroke(); ctx.restore();
       }
+      // price levels: dashed line + pill at the left; off-range ones pin to the edge with an arrow
+      const lvPills = [];
+      if (this.levels && this.levels.length) {
+        const used = { right: xy.length ? [xy[xy.length - 1][1]] : [], left: [] };
+        const free = (side, py) => !used[side].some((u) => Math.abs(u - py) < 21);
+        for (const l of this.levels) {
+          let y = Y(l.v), label = l.label, off = 0;
+          if (y < top - 4) { y = top - 4; off = 1; } else if (y > h - bot) { y = h - bot; off = -1; }
+          if (off) label = (off > 0 ? "↑ " : "↓ ") + label;
+          else { ctx.save(); ctx.setLineDash([5, 4]); ctx.strokeStyle = l.color; ctx.lineWidth = 1.2; ctx.globalAlpha = .85;
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); ctx.restore(); }
+          // right edge first (next to the live price), then left, then stack away from the clash
+          let side = free("right", y) ? "right" : free("left", y) ? "left" : null, py = y;
+          if (!side) {   // nudge up/down on either side until it clears (stays inside the plot)
+            const lo = top - 4, hi = h - bot;
+            outer: for (let k = 1; k <= 6; k++) for (const sg of [1, -1]) for (const sd of ["right", "left"]) {
+              const q = y + sg * k * 21;
+              if (q >= lo && q <= hi && free(sd, q)) { side = sd; py = q; break outer; }
+            }
+            if (!side) side = "left";
+          }
+          used[side].push(py);
+          lvPills.push([label, side === "left" ? 4 : w - 4 - padR, py, l.color, l.fg || "#fff", side]);
+        }
+      }
       if (L.length >= 2) {
         const g = ctx.createLinearGradient(0, top, 0, h);
         g.addColorStop(0, "rgba(0,211,90,.28)"); g.addColorStop(1, "rgba(0,211,90,0)");
@@ -99,9 +127,14 @@
         ctx.beginPath(); L.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
         ctx.strokeStyle = G; ctx.lineWidth = 2.2; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
       }
+      // level pills go on top of the price fill; marks then route around them
+      const placed = [];
+      for (const [label, px, py, bg, fg, side] of lvPills) {
+        const r = pill(ctx, label, px, py, bg, fg, w, { align: side });
+        placed.push({ x: r.x, w: r.w, y: py });
+      }
       // marks above the line; a later mark that would overlap moves up a row
       const lastX = L[L.length - 1][0];
-      const placed = [];
       const sorted = this.marks.slice().sort((a, b) => a.ts - b.ts);
       ctx.font = "700 11px -apple-system,BlinkMacSystemFont,sans-serif";
       for (const m of sorted) {

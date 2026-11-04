@@ -387,3 +387,14 @@ input.tokf:focus{outline:2px solid var(--blue)}
 @media (prefers-reduced-motion:reduce){.lt-new{animation:none}}
 .lt-wide{grid-column:span 3;display:flex;justify-content:space-between;align-items:center}
 .lt-wide .lt-v{margin-top:0;font-size:15px}
+
+/* Market */
+.mk-strip{margin-top:4px}
+.mk-hot{box-shadow:inset 0 0 0 1.5px var(--red)}
+.mk-px{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0 8px}
+.mk-price{font-size:26px;font-weight:800;margin-right:4px}
+.mk-grid{margin:0 0 6px;padding:0}
+.mk-chart{position:relative;height:200px;margin:8px -4px 4px;border-radius:12px;background:rgba(255,255,255,.02)}
+.mk-chart canvas{width:100%;height:100%;display:block}
+.mk-noch{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+.mk-sec .lt-card{margin-bottom:12px}

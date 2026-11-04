@@ -381,6 +381,7 @@
       <div id="h-needs"></div>
       <div id="h-trade"></div>
       <div id="h-live"></div>
+      <div id="h-market"></div>
       <section class="sec"><div class="sec-h"><h2 id="h-agents-h">Agents</h2><button class="link tap" data-go="#/agents">See all</button></div>
         <div class="hscroll" id="h-cards"></div><div class="dots" id="h-dots">${AGENTS.map((_, i) => `<i class="${i ? "" : "on"}"></i>`).join("")}</div></section>
       <section class="sec"><div class="sec-h"><h2>Activity</h2><button class="link tap" data-go="#/activity">See all</button></div><div id="h-act"></div></section>`;
@@ -389,6 +390,7 @@
     $$("[data-go]", v).forEach((b) => (b.onclick = () => (location.hash = b.dataset.go)));
     $("#h-trade", v).addEventListener("click", (e) => { const st = e.target.closest("[data-tstop]"); if (st) { haptic(); return tradeStop(st); }
       const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; } });
+    $("#h-market", v).addEventListener("click", (e) => { const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; } });
     $("#h-live", v).addEventListener("click", (e) => { const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; } });
     $("#h-ranges", v).addEventListener("click", (e) => {
       const b = e.target.closest("[data-r]"); if (!b || b.dataset.r === homeRange) return; haptic();
@@ -445,6 +447,7 @@
       }
       renderNeeds(v, st);
       const ht = $("#h-trade", v); if (ht) { const h = tradeHomeCard(C.autotrade); if (ht._h !== h) { ht._h = h; ht.innerHTML = h; } }
+      const hm = $("#h-market", v); if (hm) { const h = marketHomeCard(C.tradefeed); if (hm._h !== h) { hm._h = h; hm.innerHTML = h; } }
       const hl = $("#h-live", v); if (hl) { const h = feedHomeCard(C.tradefeed); if (hl._h !== h) { hl._h = h; hl.innerHTML = h; } }
       const A = agentsOf(st);
       const running = num(pick(st || {}, "agentsRunning")) ?? AGENTS.filter((a) => A[a.key] && agentPaused(a.key, A[a.key]) === false).length;
@@ -1187,7 +1190,111 @@
     return { load, update, unmount: () => { alive = false; clearTimeout(timer); v.onclick = null; } };
   }
 
-  const SCREENS = { live: liveScreen, trade: tradeScreen, home: homeScreen, agents: agentsScreen, activity: activityScreen, account: accountScreen, coin: coinScreen, audit: auditScreen };
+  /* ================================================================ MARKET: only the coins auto-trade touches (read-only) */
+  const fmtHeld = (sec) => { sec = num(sec); if (sec === null) return "n/a"; sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60; return h ? `${h}h ${m}m` : m ? `${m}m ${x}s` : `${x}s`; };
+  const chgChip = (k, v) => `<span class="chip ${num(v) === null ? "grey" : num(v) < 0 ? "red" : "green"}">${k} ${esc(fmtPct(v, 1))}</span>`;
+  const MK_STATE = { open: ["OPEN", "blue"], closed: ["CLOSED", "grey"], cleared: ["CLEARED", "green"] };
+  function mkLevels(x) {
+    const L = x.levels || {}, P = (x.points || []).map((q) => q[1]).filter((v) => v > 0);
+    const lo = P.length ? Math.min(...P) : null, hi = P.length ? Math.max(...P) : null;
+    const near = (v) => lo === null || (v >= lo / 1.6 && v <= hi * 1.6);
+    const out = [], css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    const add = (v, label, color, fg, always) => { if (has(v)) out.push({ v: +v, label, color: css(color), fg, fit: x.state === "open" || always ? true : near(+v) }); };
+    add(L.entry, (x.state === "cleared" ? "Signal " : "Entry ") + fmtPrice(L.entry), "--blue", "#fff", x.state !== "cleared");
+    add(L.stop, L.grace ? `Hard stop -${+L.stopPct}% · grace ${Math.max(0, Math.round(+L.graceLeftS || 0))}s` : `Stop -${+L.stopPct}%`, "--red", "#fff", x.state === "closed");
+    if (x.state !== "closed") add(L.trailStart, `TP · trail +${+L.trailStartPct}%`, "--green", "#000");
+    add(L.trail, `Trail -${+L.trailPct}% of peak`, "--orange", "#000", true);
+    if (x.state === "closed") add(L.exit, "Exit " + fmtPrice(L.exit), num(x.pnlUsd) < 0 ? "--red" : "--green", num(x.pnlUsd) < 0 ? "#fff" : "#000", true);
+    return out;
+  }
+  function mkBody(x) {
+    const pnlK = x.state === "open" ? "Unrealized" : x.state === "closed" ? "Realized" : "Since signal";
+    const pnlV = has(x.pnlPct) ? fmtPct(x.pnlPct, 1) + (has(x.pnlUsd) ? " · " + fmtSigned(x.pnlUsd) : "") : "n/a";
+    const held = x.state === "cleared" ? (x.orderStatus === "confirming" ? "confirming entry" : x.orderStatus ? `order ${x.orderStatus}` : "not bought") : fmtHeld(x.heldS);
+    const cell = (k, v, cls = "", id = "") => `<div class="lt-cell"${id ? ` id="${id}"` : ""}><div class="lt-k">${k}</div><div class="lt-v mono ${cls}">${v}</div></div>`;
+    return `<div class="mk-px"><span class="mk-price mono">${esc(fmtPrice(x.priceUsd))}</span>${chgChip("5m", x.changeM5)}${chgChip("1h", x.changeH1)}</div>
+      <div class="lt-sum mk-grid">${cell("Mcap", esc(fmtCompact(x.marketCap)))}${cell("Liquidity", esc(fmtCompact(x.liquidityUsd)))}${cell(x.state === "cleared" ? "Status" : "Held", esc(held), x.state === "cleared" && x.orderStatus === "refused" ? "red" : "")}
+        <div class="lt-cell lt-wide mk-pnl"><div class="lt-k">${pnlK} P&amp;L</div><div class="lt-v mono ${pnlCls(x.pnlPct)}">${esc(pnlV)}</div></div></div>
+      ${x.state === "closed" && x.exitReason ? `<div class="lt-line">Exit: ${esc(x.exitReason)} · ${esc(fmtET(x.closedAt))}</div>` : ""}
+      ${x.state === "cleared" && x.orderError ? `<div class="lt-line muted">${esc(x.orderError)}</div>` : ""}`;
+  }
+  function mkCard(x) {
+    const [st, col] = MK_STATE[x.state] || ["", "grey"];
+    const nm = x.name && x.symbol && x.name !== x.symbol ? `${esc(x.name)} <span class="muted">${esc(x.symbol)}</span>` : esc(x.symbol || x.name || (x.mint || "").slice(0, 6));
+    const when = x.state === "cleared" ? x.signalTs : x.openedAt;
+    return `<div class="lt-card mk-card" data-mk="${esc(x.mint)}">
+      <div class="lt-top"><span class="chip ${col}">${st}</span>${x.mode === "LIVE_WALLET" ? `<span class="chip red">WALLET</span>` : x.mode ? `<span class="chip amber">TEST</span>` : ""}<span class="lt-time muted">${esc(fmtET(when))}</span></div>
+      <div class="lt-name">${nm}</div>
+      <div class="mk-body"></div>
+      <div class="mk-chart"><canvas></canvas><div class="mk-noch hidden">Waiting for price ticks</div></div>
+      <div class="btn-row"><button class="btn green" data-mkfomo="${esc(x.mint)}">Open on FOMO</button><button class="btn ghost" data-go="#/coin/${esc(encodeURIComponent(x.mint))}">Coin details</button></div></div>`;
+  }
+  function marketHomeCard(F) {
+    const M = F && F.market; if (!M) return "";
+    const n = M.counts || {}, o = (M.coins || []).filter((x) => x.state === "open");
+    const sub = o.length ? o.map((x) => `${esc(x.symbol || "")} <span class="${pnlCls(x.pnlPct)}">${esc(fmtPct(x.pnlPct, 1))}</span>`).join(" · ") : `Nothing open · ${esc(fmtInt(n.cleared))} cleared, ${esc(fmtInt(n.closed))} closed recently`;
+    return `<section class="sec"><div class="sec-h"><h2>Market</h2><button class="link tap" data-go="#/market">Open</button></div>
+      <div class="group plain"><div class="row tap" data-go="#/market" id="h-market-row"><div class="main"><div class="t">Auto-trade coins ${tradeChip(F.mode === "LIVE_WALLET" ? "LIVE_WALLET" : "TEST")}</div><div class="s">${sub}</div></div>${icon("chev", "chev")}</div></div></section>`;
+  }
+  function marketScreen(v) {
+    v.innerHTML = `<header class="hdr"><div class="title" style="flex:1"><span>Market</span></div><span class="chip amber" id="mk-badge">TEST</span></header>
+      <div class="offline-slot"></div><div class="sec lt-note muted">Only coins auto-trade holds, just closed, or that cleared every check in the last 2h. Updates every 3s.</div>
+      <div id="mk-strip"></div><div id="mk-list"></div><div class="foot" id="mk-foot"></div>`;
+    const charts = new Map(); let key = "", timer = null, alive = true, lastTrade = 0;
+    async function load() {
+      const ps = [loadFeed()];
+      if (!C.autotrade || Date.now() - lastTrade > 15000) { lastTrade = Date.now(); ps.push(loadTrade().catch(() => {})); }
+      await Promise.all(ps);
+    }
+    function strip(F, M) {
+      const w = ((C.autotrade || {}).wallet) || {}, tw = (F.summary || {}).testWallet, live = F.mode === "LIVE_WALLET";
+      const real = has(w.sol) ? `${(+w.sol).toFixed(4)} SOL${has(w.usd) ? " · " + fmtUsd(w.usd) : ""}` : "n/a";
+      const sol = has(M.solUsd) ? M.solUsd : (tw && tw.solUsd);
+      return `<div class="lt-sum mk-strip" id="mk-strip-in">
+        <div class="lt-cell" id="mk-sol"><div class="lt-k">SOL</div><div class="lt-v mono">${esc(fmtUsd(sol))}</div></div>
+        <div class="lt-cell" id="mk-mode"><div class="lt-k">Mode</div><div class="lt-v">${tradeChip(F.mode || "OFF")}</div></div>
+        <div class="lt-cell" id="mk-open"><div class="lt-k">Open</div><div class="lt-v mono">${esc(fmtInt((M.counts || {}).open))}</div></div>
+        <div class="lt-cell lt-wide" id="mk-testwallet"><div class="lt-k">Test wallet <span class="chip amber">TEST</span></div><div class="lt-v mono">${esc(twText(tw))}</div></div>
+        <div class="lt-cell lt-wide${live ? " mk-hot" : ""}" id="mk-realwallet"><div class="lt-k">Real wallet${live ? ' <span class="chip red">LIVE</span>' : ""}</div><div class="lt-v mono">${esc(real)}</div></div></div>`;
+    }
+    function update() {
+      const F = C.tradefeed, M = F && F.market, list = $("#mk-list", v);
+      const live = F && F.mode === "LIVE_WALLET";
+      $("#mk-badge", v).textContent = live ? "LIVE WALLET" : (F && F.mode === "OFF" ? "OFF" : "TEST");
+      $("#mk-badge", v).className = "chip " + (live ? "red" : F && F.mode === "OFF" ? "grey" : "amber");
+      if (!M) { list.innerHTML = `<div class="sec">${NET.offline || F ? emptyBox("executor", "No market data yet", "The desk's feed sends it every few seconds") : sk(160, "100%", 14) + sk(260, "100%", 14, 14)}</div>`; key = ""; for (const c of charts.values()) c.destroy(); charts.clear(); return; }
+      const sh = strip(F, M), sb = $("#mk-strip", v); if (sb._h !== sh) { sb._h = sh; sb.innerHTML = sh; }
+      const coins = M.coins || [], n = M.counts || {};
+      const k = coins.map((x) => x.mint + ":" + x.state).join("|");
+      if (k !== key) {
+        key = k; for (const c of charts.values()) c.destroy(); charts.clear();
+        const sec = (title, st) => { const xs = coins.filter((x) => x.state === st); return xs.length ? `<div class="sec mk-sec" id="mk-sec-${st}"><div class="sec-h"><h2>${title}</h2></div>${xs.map(mkCard).join("")}</div>` : ""; };
+        list.innerHTML = (n.open ? "" : `<div class="sec" id="mk-empty">${emptyBox("executor", "Nothing open right now", F.mode === "OFF" ? "Auto-trade is OFF · no new buys" : "The next coin that clears every check appears here with its live chart")}</div>`) +
+          sec("Open positions", "open") + sec("Recently closed", "closed") + sec("Cleared checks · last 2h", "cleared");
+        $$("[data-mk]", list).forEach((el) => charts.set(el.dataset.mk, new Charts.Line($("canvas", el))));
+      }
+      for (const x of coins) {
+        const el = list.querySelector(`[data-mk="${CSS.escape(x.mint)}"]`); if (!el) continue;
+        const b = $(".mk-body", el), h = mkBody(x); if (b._h !== h) { b._h = h; b.innerHTML = h; }
+        const ch = charts.get(x.mint), pts = x.points || [], noch = $(".mk-noch", el);
+        noch.classList.toggle("hidden", pts.length >= 2);
+        const lv = mkLevels(x);
+        const sig = JSON.stringify([pts.length, pts[pts.length - 1], lv.map((l) => [l.v, l.fit]), (x.marks || []).length]);
+        if (ch && ch._sig !== sig) { ch._sig = sig; ch.setData(pts.length >= 2 ? pts : [], x.marks || [], null, pts.length >= 2 ? lv : []); }
+      }
+      $("#mk-foot", v).textContent = has(F.feedAge) ? `Feed ${F.feedAge < 20 ? "live" : "stale"} · updated ${Math.round(F.feedAge)}s ago` : "";
+    }
+    const tick = async () => { if (!alive) return; try { await load(); update(); } catch (_) {} if (alive) timer = setTimeout(tick, 3000); };
+    timer = setTimeout(tick, 3000);
+    v.onclick = (e) => {
+      const f = e.target.closest("[data-mkfomo]");
+      if (f) { e.stopPropagation(); haptic(); const x = ((((C.tradefeed || {}).market) || {}).coins || []).find((c) => c.mint === f.dataset.mkfomo); return openExternal(x && x.link); }
+      const g = e.target.closest("[data-go]"); if (g) { haptic(); location.hash = g.dataset.go; }
+    };
+    return { load, update, unmount: () => { alive = false; clearTimeout(timer); v.onclick = null; for (const c of charts.values()) c.destroy(); charts.clear(); } };
+  }
+
+  const SCREENS = { market: marketScreen, live: liveScreen, trade: tradeScreen, home: homeScreen, agents: agentsScreen, activity: activityScreen, account: accountScreen, coin: coinScreen, audit: auditScreen };
 
   /* ================================================================ SSE: live trades + activity */
   let es = null, esRetry = 0, lastSeq = 0;
